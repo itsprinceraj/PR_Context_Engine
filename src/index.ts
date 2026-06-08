@@ -1,139 +1,69 @@
-import { Server } from "@modelcontextprotocol/sdk/server";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { analyzePRTool } from "./tools/analyzePR.js";
+import { searchSimilarPRsTool } from "./tools/searchSimilarPRs.js";
+import { indexPRTool } from "./tools/indexPR.js";
 import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import { embeddingService } from "./services/embeddings.service";
+  AnalyzePRInputSchema,
+  SearchSimilarPRsInputSchema,
+  IndexPRInputSchema,
+} from "./types/index.js";
+import server from "./config/mcpServer.config.js";
+import { logger } from "./utils/logger.js";
 
-// Initialize Pinecone
-import { Pinecone } from "@pinecone-database/pinecone";
-import { config } from "./config/config";
-const pinecone = new Pinecone({ apiKey: config.pineconeApiKey });
-
-// Initialize Github
-import { Octokit } from "@octokit/rest";
-import { required } from "joi";
-const octokit = new Octokit({ auth: config.githubAuthToken });
-
-// Initialize MCP Server
-const server = new Server(
+// Register analyze_pr tool
+server.registerTool(
+  "analyze_pr",
   {
-    name: "pr-context-engine",
-    version: "1.0.0",
+    description: "Analyze a GitHub pull request using RAG from past PRs and documentation",
+    inputSchema: AnalyzePRInputSchema.shape,
   },
-  {
-    capabilities: {
-      tools: {},
-    },
-  },
+  async (args) => await analyzePRTool(args)
 );
 
-// Define tools
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  tools: [
-    {
-      name: "analyze_pr",
-      description:
-        "Analyze a Github pull request, using RAG from past PRs and docs",
-      inputSchema: {
-        type: "object",
-        properties: {
-          owner: { type: "string" },
-          repo: { type: "string" },
-          pr_number: { type: "number" },
-          model: { type: "string" },
-        },
-        required: ["owner", "repo", "pr_number", "pineconeIdx"],
-      },
-      annotations: { readonlyHint: true },
-    },
-    {
-      name: "search_similar_prs",
-      description: "Find past PRs similar to a given query or code change",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string" },
-          top_k: { type: "number", default: 5 },
-        },
-        required: ["query"],
-      },
-      annotations: { readOnlyHint: true },
-    },
-    {
-      name: "index_pr",
-      description: "Index a PR into the knowledge base for future reference",
-      inputSchema: {
-        type: "object",
-        properties: {
-          owner: { type: "string" },
-          repo: { type: "string" },
-          pr_number: { type: "number" },
-        },
-        required: ["owner", "repo", "pr_number"],
-      },
-      annotations: { destructiveHint: true },
-    },
-  ];
-});
+// Register search_similar_prs tool
+server.registerTool(
+  "search_similar_prs",
+  {
+    description: "Find past pull requests similar to a given query or code change using semantic search",
+    inputSchema: SearchSimilarPRsInputSchema.shape,
+  },
+  async (args) => await searchSimilarPRsTool(args)
+);
 
-// Implement tool handlers
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const { name, arguments: args } = req.params;
-  switch (name) {
-    case "analyze_pr":
-      return await analyzePR(args as any);
-    case "search_similar_prs":
-      return await searchSimilarPRs(args as any);
-    case "index_pr":
-      return await indexPR(args as any);
-    default:
-      throw new Error(`Unknown tool: ${name}`);
-  }
-});
+// Register index_pr tool
+server.registerTool(
+  "index_pr",
+  {
+    description: "Index a pull request into the vector knowledge base for future semantic search and RAG",
+    inputSchema: IndexPRInputSchema.shape,
+  },
+  async (args) => await indexPRTool(args)
+);
 
-const analyzePR = async (args: any) => {
-  const { owner, repo, pr_number, model } = args;
-
+// Initialize and start the server
+async function startServer(): Promise<void> {
   try {
-  } catch (error) {}
-};
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
 
-const searchSimilarPRs = async (args: any) => {
-  const { query, top_k } = args;
-  const embedding = await generateEmbeddings(query);
-  const index = pinecone.Index("pr-context-engine");
-  const results = index.query({
-    topK: top_k,
-    vector: embedding,
-    includeMetadata: true,
-  });
-  return results;
-};
+    logger.info("PR Context Engine MCP Server started successfully");
+    logger.info("Server is ready and waiting for requests...");
+  } catch (error) {
+    logger.error("Failed to start MCP server:", error);
+    process.exit(1);
+  }
+}
 
-const indexPR = async (args: any) => {
-  const { owner, repo, pr_number } = args;
-  const pr = await octokit.pulls.get({
-    owner,
-    repo,
-    pull_number: pr_number,
-  });
-  const embedding = await embeddingService.generateEmbeddings(pr.data.body);
-  const index = pinecone.Index("pr-context-engine");
-  await index.upsert({
-    vectors: [
-      {
-        id: `${owner}/${repo}/${pr_number}`,
-        values: embedding,
-        metadata: {
-          owner,
-          repo,
-          pr_number,
-          title: pr.data.title,
-          body: pr.data.body,
-        },
-      },
-    ],
-  });
-};
+// Handle graceful shutdown
+process.on("SIGINT", () => {
+  logger.info("Received SIGINT, shutting down gracefully...");
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  logger.info("Received SIGTERM, shutting down gracefully...");
+  process.exit(0);
+});
+
+// Start the server
+startServer();
