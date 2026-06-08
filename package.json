@@ -2,6 +2,9 @@
   "name": "pr_context_engine",
   "version": "1.0.0",
   "main": "index.js",
+  "bin":{
+    "pr-context-engine": "./dist/index.js"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
@@ -17,7 +20,8 @@
     "@octokit/rest": "^22.0.1",
     "@pinecone-database/mcp": "^0.2.1",
     "@pinecone-database/pinecone": "^7.2.0",
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "joi": "^18.2.1"
   },
   "devDependencies": {
     "@types/node": "^25.9.2",
