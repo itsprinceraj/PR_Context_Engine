@@ -4,6 +4,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { embeddingService } from "./services/embeddings.service";
 
 // Initialize Pinecone
 import { Pinecone } from "@pinecone-database/pinecone";
@@ -118,7 +119,7 @@ const indexPR = async (args: any) => {
     repo,
     pull_number: pr_number,
   });
-  const embedding = await generateEmbeddings(pr.data.body);
+  const embedding = await embeddingService.generateEmbeddings(pr.data.body);
   const index = pinecone.Index("pr-context-engine");
   await index.upsert({
     vectors: [
