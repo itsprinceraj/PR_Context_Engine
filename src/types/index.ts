@@ -4,8 +4,7 @@ import { z } from 'zod';
 export const AnalyzePRInputSchema = z.object({
   owner: z.string().describe("GitHub repository owner/username"),
   repo: z.string().describe("GitHub repository name"),
-  pr_number: z.number().describe("Pull request number"),
-  model: z.string().optional().default("gpt-4").describe("Model to use for analysis")
+  pr_number: z.number().describe("Pull request number")
 });
 
 export const SearchSimilarPRsInputSchema = z.object({

@@ -5,10 +5,10 @@ import type { AnalyzePRInput, PRAnalysis, SimilarPRMatch, PRVectorMetadata } fro
 import { logger } from "../utils/logger.js";
 
 export async function analyzePRTool(input: AnalyzePRInput) {
-  const { owner, repo, pr_number, model = "gpt-4" } = input;
+  const { owner, repo, pr_number } = input;
   
   try {
-    logger.info(`Analyzing PR #${pr_number} in ${owner}/${repo} using ${model}`);
+    logger.info(`Analyzing PR #${pr_number} in ${owner}/${repo}`);
     
     const { data: currentPR } = await octokit.pulls.get({
       owner,
