@@ -10,12 +10,30 @@ export async function analyzePRTool(input: AnalyzePRInput) {
   try {
     logger.info(`Analyzing PR #${pr_number} in ${owner}/${repo}`);
     
+    // Fetch basic PR metadata
     const { data: currentPR } = await octokit.pulls.get({
       owner,
       repo,
       pull_number: pr_number
     });
+
+    // Fetch PR file diffs to pass back to the LLM Client for Deep Context Review
+    const { data: files } = await octokit.pulls.listFiles({
+      owner,
+      repo,
+      pull_number: pr_number,
+      per_page: 50 // Limit to 50 files for LLM Context Window safety
+    });
+
+    const diffSnippets = files
+      .filter(f => f.patch)
+      .map(f => ({
+        filename: f.filename,
+        status: f.status,
+        patch: f.patch?.substring(0, 2000) || "" // Truncate giant files
+      }));
     
+    // Use the basic metadata to find similar past PRs (General search)
     const prContext = `Title: ${currentPR.title}\nDescription: ${currentPR.body || 'No description provided'}\nAuthor: ${currentPR.user?.login}\nChanges: ${currentPR.changed_files} files, ${currentPR.additions} additions, ${currentPR.deletions} deletions`;
     
     const embedding = await embeddingService.generateEmbeddings(prContext);
@@ -40,7 +58,8 @@ export async function analyzePRTool(input: AnalyzePRInput) {
         files_changed: currentPR.changed_files || 0,
         additions: currentPR.additions || 0,
         deletions: currentPR.deletions || 0,
-        url: currentPR.html_url
+        url: currentPR.html_url,
+        diff_snippets: diffSnippets
       },
       similar_past_prs: similarPRs.map(pr => ({
         id: pr.id,
