@@ -8,46 +8,90 @@ export async function indexPRTool(input: IndexPRInput) {
   const { owner, repo, pr_number } = input;
   
   try {
-    logger.info(`Indexing PR #${pr_number} from ${owner}/${repo}`);
+    logger.info(`Indexing PR #${pr_number} from ${owner}/${repo} including deep file diffs`);
     
+    // Fetch PR metadata
     const { data: pr } = await octokit.pulls.get({
       owner,
       repo,
       pull_number: pr_number
     });
     
-    const contentToIndex = `Repository: ${owner}/${repo}\nPR #${pr_number}\nTitle: ${pr.title}\nDescription: ${pr.body || 'No description provided'}\nAuthor: ${pr.user?.login}\nStatus: ${pr.state}\nCreated: ${pr.created_at}\nChanges: ${pr.changed_files} files changed\nAdditions: +${pr.additions}\nDeletions: -${pr.deletions}\nComments: ${pr.comments}\nReview Comments: ${pr.review_comments}`;
-    
-    const embedding = await embeddingService.generateEmbeddings(contentToIndex);
-    
-    const vectorId = `${owner}/${repo}/${pr_number}`;
-    const metadata: PRVectorMetadata = {
+    // Fetch PR files diffs
+    const { data: files } = await octokit.pulls.listFiles({
       owner,
       repo,
-      pr_number,
-      title: pr.title,
-      body: pr.body?.substring(0, 1000) || "",
-      author: pr.user?.login || "unknown",
-      created_at: pr.created_at,
-      url: pr.html_url,
-      changed_files: pr.changed_files || 0,
-      additions: pr.additions || 0,
-      deletions: pr.deletions || 0
-    };
+      pull_number: pr_number,
+      per_page: 100 // Max 100 files for now to keep it sane
+    });
     
     const index = pinecone.Index<PRVectorMetadata>("pr-context-engine");
-    await index.upsert([
-      {
-        id: vectorId,
-        values: embedding,
-        metadata
+    const vectorsToUpsert = [];
+    
+    // 1. Embed and prepare the General PR Metadata Vector
+    const contentToIndex = `Repository: ${owner}/${repo}\nPR #${pr_number}\nTitle: ${pr.title}\nDescription: ${pr.body || 'No description provided'}\nAuthor: ${pr.user?.login}\nStatus: ${pr.state}\nCreated: ${pr.created_at}\nChanges: ${pr.changed_files} files changed\nAdditions: +${pr.additions}\nDeletions: -${pr.deletions}\nComments: ${pr.comments}\nReview Comments: ${pr.review_comments}`;
+    const prEmbedding = await embeddingService.generateEmbeddings(contentToIndex);
+    
+    vectorsToUpsert.push({
+      id: `${owner}/${repo}/${pr_number}/metadata`,
+      values: prEmbedding,
+      metadata: {
+        owner,
+        repo,
+        pr_number,
+        title: pr.title,
+        body: pr.body?.substring(0, 500) || "",
+        author: pr.user?.login || "unknown",
+        created_at: pr.created_at,
+        url: pr.html_url,
+        changed_files: pr.changed_files || 0,
+        additions: pr.additions || 0,
+        deletions: pr.deletions || 0
       }
-    ]);
+    });
+
+    // 2. Embed and prepare File-level Patch Vectors
+    for (const file of files) {
+      if (!file.patch) continue; // Skip binaries and files without diff text
+
+      const fileContext = `File: ${file.filename}\nStatus: ${file.status}\nChanges in PR #${pr_number}:\n${file.patch}`;
+      
+      try {
+        const fileEmbedding = await embeddingService.generateEmbeddings(fileContext);
+        vectorsToUpsert.push({
+          id: `${owner}/${repo}/${pr_number}/file/${file.filename}`,
+          values: fileEmbedding,
+          metadata: {
+            owner,
+            repo,
+            pr_number,
+            title: pr.title,
+            body: pr.body?.substring(0, 500) || "",
+            author: pr.user?.login || "unknown",
+            created_at: pr.created_at,
+            url: pr.html_url,
+            changed_files: pr.changed_files || 0,
+            additions: pr.additions || 0,
+            deletions: pr.deletions || 0,
+            filename: file.filename,
+            patch: file.patch.substring(0, 1000) // Keep metadata payload reasonable
+          }
+        });
+      } catch (err) {
+        logger.error(`Failed to generate embedding for file ${file.filename}:`, err);
+      }
+    }
+
+    // Upsert everything in a single batch
+    if (vectorsToUpsert.length > 0) {
+      logger.info(`Upserting ${vectorsToUpsert.length} vectors for PR #${pr_number} to Pinecone...`);
+      await index.upsert(vectorsToUpsert);
+    }
     
     const result: IndexResult = {
       success: true,
-      message: `Successfully indexed PR #${pr_number}`,
-      vector_id: vectorId,
+      message: `Successfully indexed PR #${pr_number} with ${vectorsToUpsert.length} total vectors (1 metadata + ${vectorsToUpsert.length - 1} file chunks)`,
+      vector_id: `${owner}/${repo}/${pr_number}/metadata`,
       metadata: {
         title: pr.title,
         author: pr.user?.login || "unknown",
@@ -55,7 +99,7 @@ export async function indexPRTool(input: IndexPRInput) {
       }
     };
     
-    logger.info(`Successfully indexed ${vectorId}`);
+    logger.info(`Successfully completed indexing PR #${pr_number}`);
     
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }]
