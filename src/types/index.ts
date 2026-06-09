@@ -32,6 +32,11 @@ export interface PRAnalysis {
     additions: number;
     deletions: number;
     url?: string;
+    diff_snippets?: Array<{
+      filename: string;
+      status: string;
+      patch: string;
+    }>;
   };
   similar_past_prs: Array<{
     id: string;
@@ -96,6 +101,8 @@ export interface PRVectorMetadata {
   changed_files: number;
   additions: number;
   deletions: number;
+  filename?: string;
+  patch?: string;
   [key: string]: any;
 }
 
