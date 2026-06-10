@@ -39,17 +39,46 @@ export async function analyzePRTool(input: AnalyzePRInput) {
     const embedding = await embeddingService.generateEmbeddings(prContext);
     
     const index = pinecone.Index<PRVectorMetadata>("pr-context-engine");
+    
+    // Query specifically for repository guidelines
+    let guidelines = [];
+    try {
+      const guidelineResponse = await index.query({
+        topK: 3,
+        vector: embedding,
+        includeMetadata: true,
+        filter: { is_guideline: true }
+      });
+      guidelines = guidelineResponse.matches || [];
+    } catch (e) {
+      logger.warn("Could not fetch guidelines (maybe none indexed yet)", e);
+    }
+    
+    // Query for similar PRs and file chunks
     const queryResponse = await index.query({
-      topK: 5,
+      topK: 15,
       vector: embedding,
       includeMetadata: true
     });
     
-    const similarPRs: SimilarPRMatch[] = queryResponse.matches?.map((match: any) => ({
-      id: match.id,
-      score: match.score || 0,
-      metadata: match.metadata
-    })) || [];
+    // Filter out guidelines and deduplicate PRs
+    const prMatches = (queryResponse.matches || []).filter((m: any) => !m.metadata?.is_guideline);
+    
+    // Dedup by PR Number to get distinct past PRs
+    const uniquePRs = new Map<number, SimilarPRMatch>();
+    for (const match of prMatches) {
+      const prNum = match.metadata?.pr_number;
+      if (prNum && prNum !== pr_number && !uniquePRs.has(prNum)) {
+        uniquePRs.set(prNum, {
+          id: match.id,
+          score: match.score || 0,
+          metadata: match.metadata as PRVectorMetadata
+        });
+      }
+      if (uniquePRs.size >= 5) break; // Keep top 5 unique
+    }
+    
+    const similarPRs = Array.from(uniquePRs.values());
     
     const analysis: PRAnalysis = {
       pr_summary: {
@@ -61,11 +90,16 @@ export async function analyzePRTool(input: AnalyzePRInput) {
         url: currentPR.html_url,
         diff_snippets: diffSnippets
       },
+      repo_guidelines: guidelines.map((g: any) => ({
+        source_file: g.metadata?.filename || "unknown",
+        content: g.metadata?.guideline_content || "",
+        similarity_score: g.score || 0
+      })),
       similar_past_prs: similarPRs.map(pr => ({
         id: pr.id,
         title: pr.metadata?.title || 'Untitled PR',
         similarity_score: pr.score,
-        url: pr.metadata?.url || `https://github.com/${owner}/${repo}/pull/${pr.id.split('/').pop()}`
+        url: pr.metadata?.url || `https://github.com/${owner}/${repo}/pull/${pr.metadata?.pr_number}`
       })),
       recommendations: generateRecommendations(currentPR, similarPRs)
     };
