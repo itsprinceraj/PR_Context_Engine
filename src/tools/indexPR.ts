@@ -8,7 +8,7 @@ export async function indexPRTool(input: IndexPRInput) {
   const { owner, repo, pr_number } = input;
   
   try {
-    logger.info(`Indexing PR #${pr_number} from ${owner}/${repo} including deep file diffs`);
+    logger.info(`Indexing PR #${pr_number} from ${owner}/${repo} including deep file diffs and review comments`);
     
     // Fetch PR metadata
     const { data: pr } = await octokit.pulls.get({
@@ -23,6 +23,14 @@ export async function indexPRTool(input: IndexPRInput) {
       repo,
       pull_number: pr_number,
       per_page: 100 // Max 100 files for now to keep it sane
+    });
+    
+    // Fetch review comments
+    const { data: comments } = await octokit.pulls.listReviewComments({
+      owner,
+      repo,
+      pull_number: pr_number,
+      per_page: 100
     });
     
     const index = pinecone.Index<PRVectorMetadata>("pr-context-engine");
@@ -81,6 +89,34 @@ export async function indexPRTool(input: IndexPRInput) {
         logger.error(`Failed to generate embedding for file ${file.filename}:`, err);
       }
     }
+    
+    // 3. Embed review comments
+    for (const comment of comments) {
+      if (!comment.body) continue;
+      
+      const commentContext = `Review Comment on PR #${pr_number} by ${comment.user?.login}:\nFile: ${comment.path}\nCode diff:\n${comment.diff_hunk}\nComment:\n${comment.body}`;
+      
+      try {
+        const commentEmbedding = await embeddingService.generateEmbeddings(commentContext);
+        vectorsToUpsert.push({
+          id: `${owner}/${repo}/${pr_number}/comment/${comment.id}`,
+          values: commentEmbedding,
+          metadata: {
+            owner,
+            repo,
+            pr_number,
+            title: pr.title,
+            author: comment.user?.login || "unknown",
+            created_at: comment.created_at,
+            filename: comment.path,
+            is_review_comment: true,
+            review_comment: comment.body.substring(0, 1000)
+          }
+        });
+      } catch (err) {
+        logger.error(`Failed to generate embedding for comment ${comment.id}:`, err);
+      }
+    }
 
     // Upsert everything in a single batch
     if (vectorsToUpsert.length > 0) {
@@ -90,7 +126,7 @@ export async function indexPRTool(input: IndexPRInput) {
     
     const result: IndexResult = {
       success: true,
-      message: `Successfully indexed PR #${pr_number} with ${vectorsToUpsert.length} total vectors (1 metadata + ${vectorsToUpsert.length - 1} file chunks)`,
+      message: `Successfully indexed PR #${pr_number} with ${vectorsToUpsert.length} total vectors`,
       vector_id: `${owner}/${repo}/${pr_number}/metadata`,
       metadata: {
         title: pr.title,

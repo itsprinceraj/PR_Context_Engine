@@ -18,10 +18,16 @@ export const IndexPRInputSchema = z.object({
   pr_number: z.number().describe("Pull request number to index")
 });
 
+export const IndexGuidelinesInputSchema = z.object({
+  owner: z.string().describe("GitHub repository owner/username"),
+  repo: z.string().describe("GitHub repository name")
+});
+
 // TypeScript types inferred from Zod schemas
 export type AnalyzePRInput = z.infer<typeof AnalyzePRInputSchema>;
 export type SearchSimilarPRsInput = z.infer<typeof SearchSimilarPRsInputSchema>;
 export type IndexPRInput = z.infer<typeof IndexPRInputSchema>;
+export type IndexGuidelinesInput = z.infer<typeof IndexGuidelinesInputSchema>;
 
 // Response types
 export interface PRAnalysis {
@@ -38,6 +44,11 @@ export interface PRAnalysis {
       patch: string;
     }>;
   };
+  repo_guidelines?: Array<{
+    source_file: string;
+    content: string;
+    similarity_score: number;
+  }>;
   similar_past_prs: Array<{
     id: string;
     title: string;
@@ -92,17 +103,21 @@ export interface GitHubPR {
 export interface PRVectorMetadata {
   owner: string;
   repo: string;
-  pr_number: number;
-  title: string;
-  body: string;
-  author: string;
-  created_at: string;
-  url: string;
-  changed_files: number;
-  additions: number;
-  deletions: number;
+  pr_number?: number;
+  title?: string;
+  body?: string;
+  author?: string;
+  created_at?: string;
+  url?: string;
+  changed_files?: number;
+  additions?: number;
+  deletions?: number;
   filename?: string;
   patch?: string;
+  is_guideline?: boolean;
+  guideline_content?: string;
+  is_review_comment?: boolean;
+  review_comment?: string;
   [key: string]: any;
 }
 
