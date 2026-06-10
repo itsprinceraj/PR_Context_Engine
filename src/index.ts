@@ -2,10 +2,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { analyzePRTool } from "./tools/analyzePR.js";
 import { searchSimilarPRsTool } from "./tools/searchSimilarPRs.js";
 import { indexPRTool } from "./tools/indexPR.js";
+import { indexGuidelinesTool } from "./tools/indexGuidelines.js";
 import {
   AnalyzePRInputSchema,
   SearchSimilarPRsInputSchema,
   IndexPRInputSchema,
+  IndexGuidelinesInputSchema,
 } from "./types/index.js";
 import server from "./config/mcpServer.config.js";
 import { logger } from "./utils/logger.js";
@@ -38,6 +40,16 @@ server.registerTool(
     inputSchema: IndexPRInputSchema.shape,
   },
   async (args) => await indexPRTool(args)
+);
+
+// Register index_repo_guidelines tool
+server.registerTool(
+  "index_repo_guidelines",
+  {
+    description: "Index repository guidelines (CONTRIBUTING.md, README.md, etc.) into the knowledge base",
+    inputSchema: IndexGuidelinesInputSchema.shape,
+  },
+  async (args) => await indexGuidelinesTool(args)
 );
 
 // Initialize and start the server
