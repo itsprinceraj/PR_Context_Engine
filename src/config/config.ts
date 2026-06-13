@@ -1,7 +1,6 @@
 import * as dotenv from "dotenv";
 import * as path from "path";
 import * as Joi from "joi";
-
 dotenv.config({path: path.join(__dirname, "../../.env")})
 
 const envVarsSchema = Joi.object().keys({
@@ -13,7 +12,6 @@ const {value: envVars, error} = envVarsSchema.prefs({ errors: { label: "key" } }
 if(error){
     throw new Error(`Config validation error: ${error.message}`)
 }
-
 
 export const config = {
     pineconeApiKey : envVars.PINECONE_API_KEY,
