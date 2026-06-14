@@ -1,26 +1,36 @@
 import { z } from 'zod';
 
+const GitHubOwnerSchema = z.string().trim().min(1).max(39).regex(/^[A-Za-z0-9-]+$/, {
+  message: "GitHub owner can only contain letters, numbers, and hyphens"
+});
+
+const GitHubRepoSchema = z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9._-]+$/, {
+  message: "GitHub repo can only contain letters, numbers, dots, underscores, and hyphens"
+});
+
+const PRNumberSchema = z.number().int().positive();
+
 // Tool input schemas
 export const AnalyzePRInputSchema = z.object({
-  owner: z.string().describe("GitHub repository owner/username"),
-  repo: z.string().describe("GitHub repository name"),
-  pr_number: z.number().describe("Pull request number")
+  owner: GitHubOwnerSchema.describe("GitHub repository owner/username"),
+  repo: GitHubRepoSchema.describe("GitHub repository name"),
+  pr_number: PRNumberSchema.describe("Pull request number")
 });
 
 export const SearchSimilarPRsInputSchema = z.object({
-  query: z.string().describe("Search query or code change description"),
-  top_k: z.number().optional().default(5).describe("Number of similar PRs to return")
+  query: z.string().trim().min(1).max(8000).describe("Search query or code change description"),
+  top_k: z.number().int().min(1).max(20).optional().default(5).describe("Number of similar PRs to return")
 });
 
 export const IndexPRInputSchema = z.object({
-  owner: z.string().describe("GitHub repository owner/username"),
-  repo: z.string().describe("GitHub repository name"),
-  pr_number: z.number().describe("Pull request number to index")
+  owner: GitHubOwnerSchema.describe("GitHub repository owner/username"),
+  repo: GitHubRepoSchema.describe("GitHub repository name"),
+  pr_number: PRNumberSchema.describe("Pull request number to index")
 });
 
 export const IndexGuidelinesInputSchema = z.object({
-  owner: z.string().describe("GitHub repository owner/username"),
-  repo: z.string().describe("GitHub repository name")
+  owner: GitHubOwnerSchema.describe("GitHub repository owner/username"),
+  repo: GitHubRepoSchema.describe("GitHub repository name")
 });
 
 // TypeScript types inferred from Zod schemas

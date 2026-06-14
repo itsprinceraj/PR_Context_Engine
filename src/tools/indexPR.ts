@@ -1,8 +1,11 @@
-import pinecone from "../config/pinecone.config.js";
 import octokit from "../config/github.config.js";
 import { embeddingService } from "../services/embeddings.service.js";
-import type { IndexPRInput, IndexResult, PRVectorMetadata } from "../types/index.js";
+import type { IndexPRInput, IndexResult } from "../types/index.js";
 import { logger } from "../utils/logger.js";
+import { buildVectorId, upsertVectorsInBatches, type VectorRecord } from "../utils/vectorStore.js";
+
+const MAX_FILES_TO_INDEX = 100;
+const MAX_REVIEW_COMMENTS_TO_INDEX = 100;
 
 export async function indexPRTool(input: IndexPRInput) {
   const { owner, repo, pr_number } = input;
@@ -18,30 +21,29 @@ export async function indexPRTool(input: IndexPRInput) {
     });
     
     // Fetch PR files diffs
-    const { data: files } = await octokit.pulls.listFiles({
-      owner,
-      repo,
-      pull_number: pr_number,
-      per_page: 100 // Max 100 files for now to keep it sane
-    });
-    
-    // Fetch review comments
-    const { data: comments } = await octokit.pulls.listReviewComments({
+    const files = await octokit.paginate(octokit.pulls.listFiles, {
       owner,
       repo,
       pull_number: pr_number,
       per_page: 100
     });
     
-    const index = pinecone.Index<PRVectorMetadata>("pr-context-engine");
-    const vectorsToUpsert = [];
+    // Fetch review comments
+    const comments = await octokit.paginate(octokit.pulls.listReviewComments, {
+      owner,
+      repo,
+      pull_number: pr_number,
+      per_page: 100
+    });
+    
+    const vectorsToUpsert: VectorRecord[] = [];
     
     // 1. Embed and prepare the General PR Metadata Vector
     const contentToIndex = `Repository: ${owner}/${repo}\nPR #${pr_number}\nTitle: ${pr.title}\nDescription: ${pr.body || 'No description provided'}\nAuthor: ${pr.user?.login}\nStatus: ${pr.state}\nCreated: ${pr.created_at}\nChanges: ${pr.changed_files} files changed\nAdditions: +${pr.additions}\nDeletions: -${pr.deletions}\nComments: ${pr.comments}\nReview Comments: ${pr.review_comments}`;
     const prEmbedding = await embeddingService.generateEmbeddings(contentToIndex);
     
     vectorsToUpsert.push({
-      id: `${owner}/${repo}/${pr_number}/metadata`,
+      id: buildVectorId(owner, repo, pr_number, "metadata"),
       values: prEmbedding,
       metadata: {
         owner,
@@ -59,7 +61,7 @@ export async function indexPRTool(input: IndexPRInput) {
     });
 
     // 2. Embed and prepare File-level Patch Vectors
-    for (const file of files) {
+    for (const file of files.slice(0, MAX_FILES_TO_INDEX)) {
       if (!file.patch) continue; // Skip binaries and files without diff text
 
       const fileContext = `File: ${file.filename}\nStatus: ${file.status}\nChanges in PR #${pr_number}:\n${file.patch}`;
@@ -67,7 +69,7 @@ export async function indexPRTool(input: IndexPRInput) {
       try {
         const fileEmbedding = await embeddingService.generateEmbeddings(fileContext);
         vectorsToUpsert.push({
-          id: `${owner}/${repo}/${pr_number}/file/${file.filename}`,
+          id: buildVectorId(owner, repo, pr_number, "file", file.filename),
           values: fileEmbedding,
           metadata: {
             owner,
@@ -91,7 +93,7 @@ export async function indexPRTool(input: IndexPRInput) {
     }
     
     // 3. Embed review comments
-    for (const comment of comments) {
+    for (const comment of comments.slice(0, MAX_REVIEW_COMMENTS_TO_INDEX)) {
       if (!comment.body) continue;
       
       const commentContext = `Review Comment on PR #${pr_number} by ${comment.user?.login}:\nFile: ${comment.path}\nCode diff:\n${comment.diff_hunk}\nComment:\n${comment.body}`;
@@ -99,7 +101,7 @@ export async function indexPRTool(input: IndexPRInput) {
       try {
         const commentEmbedding = await embeddingService.generateEmbeddings(commentContext);
         vectorsToUpsert.push({
-          id: `${owner}/${repo}/${pr_number}/comment/${comment.id}`,
+          id: buildVectorId(owner, repo, pr_number, "comment", comment.id),
           values: commentEmbedding,
           metadata: {
             owner,
@@ -121,13 +123,13 @@ export async function indexPRTool(input: IndexPRInput) {
     // Upsert everything in a single batch
     if (vectorsToUpsert.length > 0) {
       logger.info(`Upserting ${vectorsToUpsert.length} vectors for PR #${pr_number} to Pinecone...`);
-      await index.upsert(vectorsToUpsert);
+      await upsertVectorsInBatches(vectorsToUpsert);
     }
     
     const result: IndexResult = {
       success: true,
-      message: `Successfully indexed PR #${pr_number} with ${vectorsToUpsert.length} total vectors`,
-      vector_id: `${owner}/${repo}/${pr_number}/metadata`,
+      message: `Successfully indexed PR #${pr_number} with ${vectorsToUpsert.length} total vectors. Indexed ${Math.min(files.length, MAX_FILES_TO_INDEX)} of ${files.length} files and ${Math.min(comments.length, MAX_REVIEW_COMMENTS_TO_INDEX)} of ${comments.length} review comments.`,
+      vector_id: buildVectorId(owner, repo, pr_number, "metadata"),
       metadata: {
         title: pr.title,
         author: pr.user?.login || "unknown",
@@ -145,7 +147,7 @@ export async function indexPRTool(input: IndexPRInput) {
     
     const errorResult: IndexResult = {
       success: false,
-      message: `Failed to index PR #${pr_number}`,
+      message: `Failed to index PR #${pr_number}: ${error instanceof Error ? error.message : "Unknown error"}`,
       vector_id: "",
       metadata: {
         title: "",
