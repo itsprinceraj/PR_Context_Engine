@@ -1,8 +1,12 @@
-import pinecone from "../config/pinecone.config.js";
 import octokit from "../config/github.config.js";
 import { embeddingService } from "../services/embeddings.service.js";
-import type { IndexGuidelinesInput, IndexResult, PRVectorMetadata } from "../types/index.js";
+import type { IndexGuidelinesInput, IndexResult } from "../types/index.js";
 import { logger } from "../utils/logger.js";
+import { buildVectorId, upsertVectorsInBatches, type VectorRecord } from "../utils/vectorStore.js";
+
+function isGitHubNotFoundError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "status" in error && error.status === 404;
+}
 
 export async function indexGuidelinesTool(input: IndexGuidelinesInput) {
   const { owner, repo } = input;
@@ -11,8 +15,7 @@ export async function indexGuidelinesTool(input: IndexGuidelinesInput) {
     logger.info(`Indexing guidelines for ${owner}/${repo}`);
     
     const filesToFetch = ["CONTRIBUTING.md", "README.md", "docs/architecture.md"];
-    const index = pinecone.Index<PRVectorMetadata>("pr-context-engine");
-    const vectorsToUpsert = [];
+    const vectorsToUpsert: VectorRecord[] = [];
     
     for (const filename of filesToFetch) {
       try {
@@ -34,7 +37,7 @@ export async function indexGuidelinesTool(input: IndexGuidelinesInput) {
           const embedding = await embeddingService.generateEmbeddings(`File: ${filename}\n\n${chunk}`);
           
           vectorsToUpsert.push({
-            id: `${owner}/${repo}/guideline/${filename}/chunk_${i}`,
+            id: buildVectorId(owner, repo, "guideline", filename, `chunk_${i}`),
             values: embedding,
             metadata: {
               owner,
@@ -45,8 +48,8 @@ export async function indexGuidelinesTool(input: IndexGuidelinesInput) {
             }
           });
         }
-      } catch (error: any) {
-        if (error.status === 404) {
+      } catch (error: unknown) {
+        if (isGitHubNotFoundError(error)) {
           logger.info(`File ${filename} not found in ${owner}/${repo}, skipping.`);
         } else {
           logger.error(`Error fetching ${filename}:`, error);
@@ -56,13 +59,15 @@ export async function indexGuidelinesTool(input: IndexGuidelinesInput) {
 
     if (vectorsToUpsert.length > 0) {
       logger.info(`Upserting ${vectorsToUpsert.length} guideline vectors to Pinecone...`);
-      await index.upsert(vectorsToUpsert);
+      await upsertVectorsInBatches(vectorsToUpsert);
     }
     
     const result: IndexResult = {
       success: true,
-      message: `Successfully indexed ${vectorsToUpsert.length} guideline chunks for ${owner}/${repo}`,
-      vector_id: `${owner}/${repo}/guidelines`,
+      message: vectorsToUpsert.length > 0
+        ? `Successfully indexed ${vectorsToUpsert.length} guideline chunks for ${owner}/${repo}`
+        : `No guideline files found to index for ${owner}/${repo}`,
+      vector_id: buildVectorId(owner, repo, "guidelines"),
       metadata: {
         title: "Repository Guidelines",
         author: "System",

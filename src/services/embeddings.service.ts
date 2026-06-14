@@ -9,12 +9,15 @@ export interface IEmbeddingService {
 class EmbeddingService implements IEmbeddingService {
   private modelName: string = 'Xenova/all-MiniLM-L6-v2';
   private dimensions: number = 384;
-  private extractorPromise: Promise<any>;
+  private extractorPromise?: Promise<any>;
 
-  constructor() {
-    // Initialize the pipeline dynamically.
-    // It will download the model on the first run and cache it.
-    this.extractorPromise = pipeline('feature-extraction', this.modelName);
+  private getExtractor(): Promise<any> {
+    if (!this.extractorPromise) {
+      // Lazy load so the MCP server can start even before the local model cache is warm.
+      this.extractorPromise = pipeline('feature-extraction', this.modelName);
+    }
+
+    return this.extractorPromise;
   }
 
   async generateEmbeddings(text: string): Promise<number[]> {
@@ -28,7 +31,7 @@ class EmbeddingService implements IEmbeddingService {
 
       logger.info(`Generating embedding for text (${truncatedText.length} chars) using ${this.modelName}`);
 
-      const extractor = await this.extractorPromise;
+      const extractor = await this.getExtractor();
       
       // Output is a Tensor. pooling: 'mean' and normalize: true are standard for sentence embeddings.
       const output = await extractor(truncatedText, { pooling: 'mean', normalize: true });
@@ -55,7 +58,11 @@ class EmbeddingService implements IEmbeddingService {
 
       const validTexts = texts.map((t) => t.length > 8000 ? t.substring(0, 8000) : t);
 
-      const extractor = await this.extractorPromise;
+      if (validTexts.some((text) => !text || text.trim().length === 0)) {
+        throw new Error("Cannot generate batch embeddings for empty text");
+      }
+
+      const extractor = await this.getExtractor();
       
       // Extract embeddings in a single call
       const output = await extractor(validTexts, { pooling: 'mean', normalize: true });
@@ -67,7 +74,11 @@ class EmbeddingService implements IEmbeddingService {
       for (let i = 0; i < validTexts.length; i++) {
         const start = i * this.dimensions;
         const end = start + this.dimensions;
-        embeddings.push(Array.from(dataArray.slice(start, end)) as number[]);
+        const embedding = Array.from(dataArray.slice(start, end)) as number[];
+        if (embedding.length !== this.dimensions) {
+          throw new Error(`Invalid batch embedding generated at index ${i}: expected ${this.dimensions} dimensions, got ${embedding.length}`);
+        }
+        embeddings.push(embedding);
       }
 
       logger.info(`Successfully generated ${embeddings.length} local embeddings`);
