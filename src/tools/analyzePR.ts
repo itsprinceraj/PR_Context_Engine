@@ -3,6 +3,7 @@ import { embeddingService } from "../services/embeddings.service.js";
 import type { AnalyzePRInput, PRAnalysis, SimilarPRMatch, PRVectorMetadata } from "../types/index.js";
 import { logger } from "../utils/logger.js";
 import { getPRContextIndex } from "../utils/vectorStore.js";
+import { withRetry } from "../utils/retry.js";
 
 const MAX_DIFF_SNIPPETS = 50;
 const MAX_PATCH_CHARS = 2000;
@@ -14,19 +15,16 @@ export async function analyzePRTool(input: AnalyzePRInput) {
     logger.info(`Analyzing PR #${pr_number} in ${owner}/${repo}`);
     
     // Fetch basic PR metadata
-    const { data: currentPR } = await octokit.pulls.get({
-      owner,
-      repo,
-      pull_number: pr_number
-    });
+    const { data: currentPR } = await withRetry(
+      () => octokit.pulls.get({ owner, repo, pull_number: pr_number }),
+      { operationName: "GitHub pulls.get" }
+    );
 
     // Fetch PR file diffs to pass back to the LLM Client for Deep Context Review
-    const files = await octokit.paginate(octokit.pulls.listFiles, {
-      owner,
-      repo,
-      pull_number: pr_number,
-      per_page: 100
-    });
+    const files = await withRetry(
+      () => octokit.paginate(octokit.pulls.listFiles, { owner, repo, pull_number: pr_number, per_page: 100 }),
+      { operationName: "GitHub pulls.listFiles" }
+    );
 
     const diffSnippets = files
       .filter(f => f.patch)
@@ -104,10 +102,10 @@ export async function analyzePRTool(input: AnalyzePRInput) {
         url: currentPR.html_url,
         diff_snippets: diffSnippets
       },
-      repo_guidelines: guidelines.map((g: any) => ({
-        source_file: g.metadata?.filename || "unknown",
-        content: g.metadata?.guideline_content || "",
-        similarity_score: g.score || 0
+      repo_guidelines: guidelines.map((guideline) => ({
+        source_file: guideline.metadata?.filename || "unknown",
+        content: guideline.metadata?.guideline_content || "",
+        similarity_score: guideline.score || 0
       })),
       similar_past_prs: similarPRs.map(pr => ({
         id: pr.id,
