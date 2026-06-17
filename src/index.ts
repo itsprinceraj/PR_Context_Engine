@@ -15,6 +15,7 @@ import {
 import { z } from "zod";
 import server from "./config/mcpServer.config.js";
 import { logger } from "./utils/logger.js";
+import { trackToolCall } from "./utils/metrics.js";
 
 // Register analyze_pr tool
 server.registerTool(
@@ -23,7 +24,7 @@ server.registerTool(
     description: "Analyze a GitHub pull request using RAG from past PRs and documentation",
     inputSchema: AnalyzePRInputSchema.shape,
   },
-  async (args) => await analyzePRTool(args)
+  async (args) => await trackToolCall("analyze_pr", () => analyzePRTool(args))
 );
 
 // Register search_similar_prs tool
@@ -33,7 +34,7 @@ server.registerTool(
     description: "Find past pull requests similar to a given query or code change using semantic search",
     inputSchema: SearchSimilarPRsInputSchema.shape,
   },
-  async (args) => await searchSimilarPRsTool(args)
+  async (args) => await trackToolCall("search_similar_prs", () => searchSimilarPRsTool(args))
 );
 
 // Register index_pr tool
@@ -43,7 +44,7 @@ server.registerTool(
     description: "Index a pull request into the vector knowledge base for future semantic search and RAG",
     inputSchema: IndexPRInputSchema.shape,
   },
-  async (args) => await indexPRTool(args)
+  async (args) => await trackToolCall("index_pr", () => indexPRTool(args))
 );
 
 // Register index_repo_guidelines tool
@@ -53,7 +54,7 @@ server.registerTool(
     description: "Index repository guidelines (CONTRIBUTING.md, README.md, etc.) into the knowledge base",
     inputSchema: IndexGuidelinesInputSchema.shape,
   },
-  async (args) => await indexGuidelinesTool(args)
+  async (args) => await trackToolCall("index_repo_guidelines", () => indexGuidelinesTool(args))
 );
 
 server.registerTool(
@@ -62,7 +63,7 @@ server.registerTool(
     description: "Delete indexed vectors for a pull request so stale PR memory can be cleaned or reindexed",
     inputSchema: DeletePRIndexInputSchema.shape,
   },
-  async (args) => await deletePRIndexTool(args)
+  async (args) => await trackToolCall("delete_pr_index", () => deletePRIndexTool(args))
 );
 
 server.registerTool(
@@ -71,7 +72,7 @@ server.registerTool(
     description: "Show server configuration, active vector store, embedding model, and available tools without exposing secrets",
     inputSchema: z.object({}).shape,
   },
-  async () => await getServerStatusTool()
+  async () => await trackToolCall("get_server_status", () => getServerStatusTool())
 );
 
 // Initialize and start the server

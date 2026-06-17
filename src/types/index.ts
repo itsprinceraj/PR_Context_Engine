@@ -19,6 +19,8 @@ export const AnalyzePRInputSchema = z.object({
 
 export const SearchSimilarPRsInputSchema = z.object({
   query: z.string().trim().min(1).max(8000).describe("Search query or code change description"),
+  owner: GitHubOwnerSchema.optional().describe("Optional GitHub repository owner/username to scope search"),
+  repo: GitHubRepoSchema.optional().describe("Optional GitHub repository name to scope search"),
   top_k: z.number().int().min(1).max(20).optional().default(5).describe("Number of similar PRs to return")
 });
 
@@ -30,7 +32,14 @@ export const IndexPRInputSchema = z.object({
 
 export const IndexGuidelinesInputSchema = z.object({
   owner: GitHubOwnerSchema.describe("GitHub repository owner/username"),
-  repo: GitHubRepoSchema.describe("GitHub repository name")
+  repo: GitHubRepoSchema.describe("GitHub repository name"),
+  paths: z.array(z.string().trim().min(1).max(200)).max(25).optional().describe("Optional guideline/doc paths to index")
+});
+
+export const DeletePRIndexInputSchema = z.object({
+  owner: GitHubOwnerSchema.describe("GitHub repository owner/username"),
+  repo: GitHubRepoSchema.describe("GitHub repository name"),
+  pr_number: PRNumberSchema.describe("Pull request number to remove from the vector knowledge base")
 });
 
 // TypeScript types inferred from Zod schemas
@@ -38,6 +47,7 @@ export type AnalyzePRInput = z.infer<typeof AnalyzePRInputSchema>;
 export type SearchSimilarPRsInput = z.infer<typeof SearchSimilarPRsInputSchema>;
 export type IndexPRInput = z.infer<typeof IndexPRInputSchema>;
 export type IndexGuidelinesInput = z.infer<typeof IndexGuidelinesInputSchema>;
+export type DeletePRIndexInput = z.infer<typeof DeletePRIndexInputSchema>;
 
 // Response types
 export interface PRAnalysis {
@@ -63,6 +73,8 @@ export interface PRAnalysis {
     id: string;
     title: string;
     similarity_score: number;
+    rerank_score?: number;
+    matched_terms?: string[];
     url: string;
   }>;
   recommendations: Array<{
@@ -80,6 +92,9 @@ export interface SearchResult {
     title: string;
     body_preview: string;
     similarity_score: number;
+    rerank_score?: number;
+    lexical_score?: number;
+    matched_terms?: string[];
     owner: string;
     repo: string;
     pr_number: number;
@@ -95,6 +110,13 @@ export interface IndexResult {
     author: string;
     files_changed: number;
   };
+}
+
+export interface DeleteIndexResult {
+  success: boolean;
+  message: string;
+  deleted_count?: number;
+  vector_store: string;
 }
 
 // GitHub PR types
