@@ -4,6 +4,7 @@ import type { AnalyzePRInput, PRAnalysis, SimilarPRMatch, PRVectorMetadata } fro
 import { logger } from "../utils/logger.js";
 import { getPRContextIndex } from "../utils/vectorStore.js";
 import { withRetry } from "../utils/retry.js";
+import { rerankMatches } from "../utils/reranker.js";
 
 const MAX_DIFF_SNIPPETS = 50;
 const MAX_PATCH_CHARS = 2000;
@@ -90,7 +91,7 @@ export async function analyzePRTool(input: AnalyzePRInput) {
       if (uniquePRs.size >= 5) break; // Keep top 5 unique
     }
     
-    const similarPRs = Array.from(uniquePRs.values());
+    const similarPRs = rerankMatches(prContext, Array.from(uniquePRs.values()), 5);
     
     const analysis: PRAnalysis = {
       pr_summary: {
@@ -110,7 +111,9 @@ export async function analyzePRTool(input: AnalyzePRInput) {
       similar_past_prs: similarPRs.map(pr => ({
         id: pr.id,
         title: pr.metadata?.title || 'Untitled PR',
-        similarity_score: pr.score,
+        similarity_score: pr.vector_score,
+        rerank_score: pr.rerank_score,
+        matched_terms: pr.matched_terms,
         url: pr.metadata?.url || `https://github.com/${owner}/${repo}/pull/${pr.metadata?.pr_number}`
       })),
       recommendations: generateRecommendations(currentPR, similarPRs, files.length, diffSnippets.length)
