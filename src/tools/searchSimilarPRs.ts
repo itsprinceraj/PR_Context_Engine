@@ -2,9 +2,10 @@ import { embeddingService } from "../services/embeddings.service.js";
 import type { SearchSimilarPRsInput, SearchResult, SimilarPRMatch } from "../types/index.js";
 import { logger } from "../utils/logger.js";
 import { getPRContextIndex } from "../utils/vectorStore.js";
+import { rerankMatches } from "../utils/reranker.js";
 
 export async function searchSimilarPRsTool(input: SearchSimilarPRsInput) {
-  const { query, top_k = 5 } = input;
+  const { query, owner, repo, top_k = 5 } = input;
   
   try {
     logger.info(`Searching for PRs similar to: "${query}"`);
@@ -12,13 +13,17 @@ export async function searchSimilarPRsTool(input: SearchSimilarPRsInput) {
     const embedding = await embeddingService.generateEmbeddings(query);
     
     const index = getPRContextIndex();
+    const filter = {
+      is_guideline: { $ne: true },
+      ...(owner ? { owner: { $eq: owner } } : {}),
+      ...(repo ? { repo: { $eq: repo } } : {})
+    };
+
     const queryResponse = await index.query({
       topK: Math.min(top_k * 3, 50),
       vector: embedding,
       includeMetadata: true,
-      filter: {
-        is_guideline: { $ne: true }
-      }
+      filter
     });
 
     const uniquePRs = new Map<string, SimilarPRMatch>();
@@ -35,7 +40,7 @@ export async function searchSimilarPRsTool(input: SearchSimilarPRsInput) {
       if (uniquePRs.size >= top_k) break;
     }
 
-    const matches = Array.from(uniquePRs.values());
+    const matches = rerankMatches(query, Array.from(uniquePRs.values()), top_k);
     
     const results: SearchResult = {
       query,
@@ -44,7 +49,10 @@ export async function searchSimilarPRsTool(input: SearchSimilarPRsInput) {
         id: match.id,
         title: match.metadata?.title || "Untitled PR",
         body_preview: match.metadata?.body?.substring(0, 200) || "No description available",
-        similarity_score: match.score || 0,
+        similarity_score: match.vector_score,
+        rerank_score: match.rerank_score,
+        lexical_score: match.lexical_score,
+        matched_terms: match.matched_terms,
         owner: match.metadata?.owner || "unknown",
         repo: match.metadata?.repo || "unknown",
         pr_number: match.metadata?.pr_number || 0
