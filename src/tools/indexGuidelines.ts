@@ -2,7 +2,8 @@ import octokit from "../config/github.config.js";
 import { embeddingService } from "../services/embeddings.service.js";
 import type { IndexGuidelinesInput, IndexResult } from "../types/index.js";
 import { logger } from "../utils/logger.js";
-import { buildVectorId, upsertVectorsInBatches, type VectorRecord } from "../utils/vectorStore.js";
+import { buildVectorId, getVectorStoreName, upsertVectorsInBatches, type VectorRecord } from "../utils/vectorStore.js";
+import { withRetry } from "../utils/retry.js";
 
 function isGitHubNotFoundError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "status" in error && error.status === 404;
@@ -14,16 +15,15 @@ export async function indexGuidelinesTool(input: IndexGuidelinesInput) {
   try {
     logger.info(`Indexing guidelines for ${owner}/${repo}`);
     
-    const filesToFetch = ["CONTRIBUTING.md", "README.md", "docs/architecture.md"];
+    const filesToFetch = input.paths ?? ["CONTRIBUTING.md", "README.md", "docs/architecture.md"];
     const vectorsToUpsert: VectorRecord[] = [];
     
     for (const filename of filesToFetch) {
       try {
-        const { data: fileContent } = await octokit.repos.getContent({
-          owner,
-          repo,
-          path: filename
-        });
+        const { data: fileContent } = await withRetry(
+          () => octokit.repos.getContent({ owner, repo, path: filename }),
+          { operationName: `GitHub repos.getContent:${filename}` }
+        );
         
         if (!("content" in fileContent)) continue;
         
@@ -58,7 +58,7 @@ export async function indexGuidelinesTool(input: IndexGuidelinesInput) {
     }
 
     if (vectorsToUpsert.length > 0) {
-      logger.info(`Upserting ${vectorsToUpsert.length} guideline vectors to Pinecone...`);
+      logger.info(`Upserting ${vectorsToUpsert.length} guideline vectors to ${getVectorStoreName()} vector store...`);
       await upsertVectorsInBatches(vectorsToUpsert);
     }
     

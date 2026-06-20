@@ -2,7 +2,8 @@ import octokit from "../config/github.config.js";
 import { embeddingService } from "../services/embeddings.service.js";
 import type { IndexPRInput, IndexResult } from "../types/index.js";
 import { logger } from "../utils/logger.js";
-import { buildVectorId, upsertVectorsInBatches, type VectorRecord } from "../utils/vectorStore.js";
+import { buildVectorId, getVectorStoreName, upsertVectorsInBatches, type VectorRecord } from "../utils/vectorStore.js";
+import { withRetry } from "../utils/retry.js";
 
 const MAX_FILES_TO_INDEX = 100;
 const MAX_REVIEW_COMMENTS_TO_INDEX = 100;
@@ -14,27 +15,22 @@ export async function indexPRTool(input: IndexPRInput) {
     logger.info(`Indexing PR #${pr_number} from ${owner}/${repo} including deep file diffs and review comments`);
     
     // Fetch PR metadata
-    const { data: pr } = await octokit.pulls.get({
-      owner,
-      repo,
-      pull_number: pr_number
-    });
+    const { data: pr } = await withRetry(
+      () => octokit.pulls.get({ owner, repo, pull_number: pr_number }),
+      { operationName: "GitHub pulls.get" }
+    );
     
     // Fetch PR files diffs
-    const files = await octokit.paginate(octokit.pulls.listFiles, {
-      owner,
-      repo,
-      pull_number: pr_number,
-      per_page: 100
-    });
+    const files = await withRetry(
+      () => octokit.paginate(octokit.pulls.listFiles, { owner, repo, pull_number: pr_number, per_page: 100 }),
+      { operationName: "GitHub pulls.listFiles" }
+    );
     
     // Fetch review comments
-    const comments = await octokit.paginate(octokit.pulls.listReviewComments, {
-      owner,
-      repo,
-      pull_number: pr_number,
-      per_page: 100
-    });
+    const comments = await withRetry(
+      () => octokit.paginate(octokit.pulls.listReviewComments, { owner, repo, pull_number: pr_number, per_page: 100 }),
+      { operationName: "GitHub pulls.listReviewComments" }
+    );
     
     const vectorsToUpsert: VectorRecord[] = [];
     
@@ -122,7 +118,7 @@ export async function indexPRTool(input: IndexPRInput) {
 
     // Upsert everything in a single batch
     if (vectorsToUpsert.length > 0) {
-      logger.info(`Upserting ${vectorsToUpsert.length} vectors for PR #${pr_number} to Pinecone...`);
+      logger.info(`Upserting ${vectorsToUpsert.length} vectors for PR #${pr_number} to ${getVectorStoreName()} vector store...`);
       await upsertVectorsInBatches(vectorsToUpsert);
     }
     
