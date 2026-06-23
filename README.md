@@ -12,7 +12,6 @@ Most AI PR reviews only see the current diff. This server adds repository memory
 - Runs locally by default, with optional Pinecone for team/shared memory.
 
 ## Quick Start
-
 ```powershell
 npm install
 npm run build
