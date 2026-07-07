@@ -74,7 +74,6 @@ server.registerTool(
   },
   async () => await trackToolCall("get_server_status", () => getServerStatusTool())
 );
-
 // Initialize and start the server
 async function startServer(): Promise<void> {
   try {
