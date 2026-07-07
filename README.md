@@ -8,6 +8,7 @@ Most AI PR reviews only see the current diff. This server adds repository memory
 
 - Finds similar past PRs and review decisions.
 - Retrieves repository rules from docs like `README.md` and `CONTRIBUTING.md`.
+
 - Returns structured review context through MCP tools.
 - Runs locally by default, with optional Pinecone for team/shared memory.
 
