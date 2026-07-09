@@ -2,6 +2,7 @@
 
 PR Context Engine is an MCP server that gives AI PR reviewers repository memory. It indexes pull requests, file diffs, review comments, and repository guidelines, then retrieves relevant context during review.
 
+
 ## What It Does
 
 Most AI PR reviews only see the current diff. This server adds repository memory:
